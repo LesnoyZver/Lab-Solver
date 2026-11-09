@@ -5,22 +5,26 @@ description: Solves a lab or practical assignment and fills the report from the 
 
 # Lab Solver
 
-`SKILL_DIR` = this folder; personal data in `SKILL_DIR/settings.json`.
+`SKILL_DIR` = this folder. Personal data: `SKILL_DIR/settings.json`. `USAGE.md` is for humans: never read it.
 
 ## Rules
-1. Copy tasks word for word, same numbering and order; add nothing of your own. Produce only what the assignment asks for: no code, SQL or anything else it does not request (for a diagram-only work, no SQL schemas and no code in the report).
-2. Plain text only: no markdown, no bold, no conclusion, no algorithm description, no comments in code (including code you run).
-3. .docx only, checked by the build; never PDF or rendering (PNG screenshots allowed).
+1. Tasks: copy word for word, same numbering and order; add nothing of your own. Only what the assignment asks: a diagram-only work gets no SQL, no code, no extra sections.
+2. Report text is plain: no markdown, no bold, no conclusions, no algorithm prose, no comments in code (including code you run).
+3. Output .docx only, checked by the build. PNG screenshots are allowed; never PDF, never page rendering.
 4. Strict template match: nothing added, nothing removed; control questions only if the assignment has them.
+5. Never read `scripts/*.py`, the templates or `USAGE.md`; never unzip or dump template XML. The builder owns them.
+6. One pass: read each file once, do not re-read, do not re-verify after the build prints `OK`.
+7. Budget: a normal run is 8-16 tool calls. Much more means you are probing instead of working: stop and report the blocker.
 
 ## Workflow
-0. Read `SKILL_DIR/settings.json`; if missing, copy `settings.example.json`. If `list_number` or `student` is empty, ask once for list number, title-page full name and group (optional), write them to settings.json (UTF-8, ensure_ascii=False), and never ask again. Write the report in `report_language`.
-1. Read the assignment once: subject, work number, title, teacher, goal, tasks, number of variants K, control questions. Deliverables: programs, scripts or SQL -> `template` `code` (subjects/_default); only diagrams, schemes, models, calculations or text answers -> `nocode` (subjects/_nocode); mixed -> `code`. Set it in data.json.
-2. Ask in ONE message everything missing: list number, student and group on first run; the teacher; the diagram notation or tool. Never build with an empty teacher or invent one.
-3. Variant: follow the assignment's own rule; else variant = ((list_number - 1) mod K) + 1. State it and how it was computed. No variants: all tasks, `variant` empty.
-4. Solve: write each solution to a code file, run it once with `> out.txt 2>&1`, set `lang`, reference `code_file` and `images:["out.txt"]`. Teacher: read it from the assignment (title block, header, signature, file name, text); if absent, ask the user. Diagrams: use the notation, elements, naming and tool the assignment (or materials) specifies; if none, use `diagram_notation` from settings.json when set, else ask once. Draw each as a PNG (Graphviz `dot` if installed, else matplotlib, installed with pip if needed; if neither works, stop and report), readable text in the report language, width fitting the page, no tool code or diagram source in the report. Put PNG paths into the task's `images`. Use `python3` with absolute `SKILL_DIR/scripts/...` paths. If an import fails, run `python3 -m pip install -r SKILL_DIR/requirements.txt` once, else stop.
-5. Build: `python3 SKILL_DIR/scripts/build_report.py data.json OUT.docx`; it checks itself. On VIOLATIONS fix the input and rebuild once; do not run `--check` separately. Name it next to the assignment `ЛР<number>.docx` (lab), `ПР<number>.docx` (practical), else `report_<number>.docx`. Delete temp files (data.json, code files, out.txt, PNGs, diagram sources).
-6. Reply: subject and work, template (code/nocode), variant and computation, path, open [FILL IN] items. No retelling.
+0. Settings. The first build creates `settings.json` from the example. If `list_number` or `student` is empty, ask once for list number, full name and group (optional), write them to the file (UTF-8, ensure_ascii=False), never ask again. Report language: `report_language`, else Russian.
+1. Read the assignment once: `python3 SKILL_DIR/scripts/build_report.py --read "<assignment>"` prints text and tables of .docx/.pdf/.txt in one call; `--max-chars N` trims a long PDF. Take subject, work number, title, teacher, goal, tasks, number of variants K, control questions.
+2. Ask everything missing in ONE message: teacher, diagram notation or tool, whatever else. Never build with an invented or empty teacher, never repeat a question you already asked.
+3. Variant: the assignment's own rule; else ((list_number - 1) mod K) + 1. State the number and the computation. No variants: all tasks, `variant` empty.
+4. Solve: one file per task, run once with `> out.txt 2>&1`, set `lang`, pass `code_file` and `images: ["out.txt"]`. Diagrams: use the notation, elements and naming the assignment (or its materials) gives, else `diagram_notation`, else ask once. Render PNG with Graphviz `dot` if installed, else matplotlib; `build_report.py --doctor` shows the available tooling in one call instead of probing. Figure text in the report language, width fitting the page; no diagram source in the report. Screenshots come from text output only: never run VMs, containers, SSH or GUI automation, and never record the screen. A task that truly needs a live OS or GUI: stop and tell the user.
+5. Build: `python3 SKILL_DIR/scripts/build_report.py data.json --next-to "<assignment>"`. It picks the name (ЛР/ПР<number>.docx), writes next to the assignment, checks itself and prints `OK` or `VIOLATIONS`. Never copy the file afterwards. On VIOLATIONS fix data.json and rebuild once; never run `--check` on top.
+6. Clean temp files (data.json, code, out.txt, PNGs, diagram sources), keep the report.
+7. Reply short: subject and work, template code|nocode, variant and computation, path, `[FILL IN]` items.
 
 ## data.json
 {
@@ -28,7 +32,5 @@ description: Solves a lab or practical assignment and fills the report from the 
  "tasks":[{"n":1,"text":"...","lang":"cpp","code":"..." OR "code_file":"sol.cpp","images":["out.txt","scheme.png"]}],
  "questions":[{"q":"...","a":"..."}]
 }
-`template` optional (auto by code). `images` alias `screenshots`. Nocode: omit `code`/`code_file`.
-Student/group from settings.json (data.json override only if asked). If Pillow cannot render, leave `images` empty and say so.
-NEVER open, unzip or dump the template XML/footer; the script handles it.
-One pass: each step once; do not re-read files without need.
+`template` is optional (auto by code). `images` alias `screenshots`. Nocode builds: omit `code`/`code_file`. `student`, `group`, `list_number` come from settings.json; override in data.json only when the user asks.
+If an import fails, run `python3 -m pip install -r SKILL_DIR/requirements.txt` once, else stop.

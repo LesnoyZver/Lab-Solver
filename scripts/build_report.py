@@ -3,10 +3,12 @@
 
 Usage:
     python3 scripts/build_report.py data.json out.docx
+    python3 scripts/build_report.py data.json --next-to assignment.docx
+    python3 scripts/build_report.py --read assignment.docx|assignment.pdf
     python3 scripts/build_report.py --check out.docx [--dump]
 
 Templates: "code" (subjects/_default) and "nocode" (subjects/_nocode).
-Exit codes: 0 ok, 1 error, 2 violations.
+Exit codes: 0 ok, 1 error, 2 violations, 3 missing optional dependency.
 """
 
 import argparse
@@ -18,21 +20,31 @@ import sys
 import tempfile
 from pathlib import Path
 
-from docx import Document
-from docx.image.image import Image as DocxImage
-from docx.opc.constants import RELATIONSHIP_TYPE as RT
-from docx.oxml.ns import qn
-from docx.shared import Inches
-from docx.text.paragraph import Paragraph
-from lxml import etree
-
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
+REQUIREMENTS = SKILL_DIR / "requirements.txt"
+
+try:
+    from docx import Document
+    from docx.image.image import Image as DocxImage
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml.ns import qn
+    from docx.shared import Inches
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    from lxml import etree
+except ImportError as exc:
+    sys.exit(
+        "missing Python package (%s); run once: python3 -m pip install -r %s"
+        % (exc, REQUIREMENTS)
+    )
+
 TEMPLATES = {
     "code": SKILL_DIR / "subjects" / "_default" / "template.docx",
     "nocode": SKILL_DIR / "subjects" / "_nocode" / "template.docx",
 }
 SETTINGS = SKILL_DIR / "settings.json"
+SETTINGS_EXAMPLE = SKILL_DIR / "settings.example.json"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 BODY_START = "Цель работы"
@@ -158,12 +170,140 @@ def normalize_core_relationship(doc):
 
 def load_settings():
     if not SETTINGS.is_file():
-        sys.exit("copy settings.example.json to settings.json and fill it in")
+        if not SETTINGS_EXAMPLE.is_file():
+            sys.exit("settings.json and settings.example.json are both missing")
+        shutil.copyfile(SETTINGS_EXAMPLE, SETTINGS)
+        print("created: " + str(SETTINGS))
     with open(SETTINGS, encoding="utf-8") as fh:
         try:
             return json.load(fh)
         except ValueError as exc:
             sys.exit("settings.json is not valid JSON: " + str(exc))
+
+
+def compact_lines(lines):
+    """Drop blank-line runs and trailing spaces: fewer tokens per read."""
+    out = []
+    blank = 0
+    for line in lines:
+        line = line.rstrip()
+        if line:
+            blank = 0
+            out.append(line)
+            continue
+        blank += 1
+        if blank == 1 and out:
+            out.append("")
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def docx_lines(path):
+    doc = Document(str(path))
+    lines = []
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            lines.append(Paragraph(child, doc).text)
+        elif child.tag == qn("w:tbl"):
+            lines.append("[table]")
+            for row in Table(child, doc).rows:
+                cells = []
+                seen = set()
+                for cell in row.cells:
+                    if id(cell._tc) in seen:
+                        continue
+                    seen.add(id(cell._tc))
+                    cells.append(" ".join(cell.text.split()))
+                lines.append(" | ".join(cells))
+    return lines
+
+
+def pdf_lines(path):
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader
+        except ImportError:
+            sys.exit(
+                "PDF needs the pypdf package; run once: "
+                "python3 -m pip install -r %s" % REQUIREMENTS
+            )
+    try:
+        reader = PdfReader(str(path))
+        pages = [(page.extract_text() or "") for page in reader.pages]
+    except Exception as exc:
+        sys.exit("cannot read PDF (%s); ask the user for a .docx copy" % exc)
+    return "\n\n".join(pages).split("\n")
+
+
+def text_lines(path):
+    return path.read_text(encoding="utf-8", errors="replace").split("\n")
+
+
+def read_assignment(path, max_chars=0):
+    """Print the assignment text and tables in one call: replaces ad-hoc docx probes."""
+    if not path.is_file():
+        sys.exit("file not found: " + str(path))
+    suffix = path.suffix.lower()
+    readers = {".docx": docx_lines, ".pdf": pdf_lines, ".txt": text_lines, ".md": text_lines}
+    reader = readers.get(suffix)
+    if reader is None:
+        sys.exit("unsupported assignment format: %s (use .docx, .pdf or .txt)" % suffix)
+    lines = compact_lines(reader(path))
+    text = "\n".join(lines)
+    print("== %s (%d lines)" % (path.name, len(lines)))
+    if max_chars and len(text) > max_chars:
+        print(text[:max_chars])
+        print("... [truncated: %d chars total, rerun with a higher --max-chars]" % len(text))
+    else:
+        print(text)
+    return 0
+
+
+def report_name(work_type, number):
+    kind = str(work_type or "").upper()
+    if "ЛАБ" in kind:
+        return "ЛР%s.docx" % number
+    if "ПРАКТ" in kind:
+        return "ПР%s.docx" % number
+    return "report_%s.docx" % number
+
+
+def doctor():
+    """One call instead of probing fonts, Graphviz and Python packages."""
+    import importlib.util
+
+    def spec(name):
+        try:
+            return importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            return False
+
+    print("python: %s (%s)" % (sys.version.split()[0], sys.executable))
+    print("python-docx: ok")
+    print("lxml: ok")
+    try:
+        from PIL import __version__ as pillow_version
+
+        font = make_screenshot._load_font()
+        print("Pillow: %s (monospace font: %s)" % (pillow_version, "ok" if font else "missing"))
+    except ImportError:
+        print("Pillow: missing (text screenshots unavailable)")
+    pdf_lib = next((name for name in ("pypdf", "PyPDF2") if spec(name)), None)
+    print("pdf reader: %s" % (pdf_lib or "missing (--read .pdf needs pypdf)"))
+    print("graphviz dot: %s" % (shutil.which("dot") or "missing"))
+    print("matplotlib: %s" % ("ok" if spec("matplotlib") else "missing"))
+    for name, path in sorted(TEMPLATES.items()):
+        print("template %s: %s" % (name, "ok" if path.is_file() else "MISSING"))
+    if SETTINGS.is_file():
+        settings = load_settings()
+        state = "ok" if str(settings.get("student") or "").strip() else "student empty"
+        print("settings: %s (%s)" % (SETTINGS.name, state))
+    else:
+        print("settings: missing (created by the first build)")
+    return 0
 
 
 def resolve(base_dir, value):
@@ -498,6 +638,8 @@ def build_problems(doc, data, data_dir, warnings):
         if hits:
             problems.append("markdown in " + label + ": " + ",".join(hits))
     for i, task in enumerate(data.get("tasks") or [], 1):
+        if not str(task.get("text") or "").strip():
+            problems.append("task %d text is empty" % i)
         lang = (task.get("lang") or "").lower()
         if task.get("code") or task.get("code_file"):
             if lang not in C_LIKE | HASH_LIKE | PASCAL | MATLAB | MARKUP | {"sql"}:
@@ -565,17 +707,38 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("data", nargs="?", help="input data.json")
     parser.add_argument("out", nargs="?", help="output .docx")
+    parser.add_argument("--read", metavar="FILE", help="print an assignment and exit")
+    parser.add_argument("--max-chars", type=int, default=0, help="truncate --read output")
+    parser.add_argument("--doctor", action="store_true", help="print environment status and exit")
+    parser.add_argument("--next-to", metavar="ASSIGNMENT", help="write next to the assignment")
     parser.add_argument("--check", metavar="DOCX", help="check a finished report")
     parser.add_argument("--dump", action="store_true", help="print text dump with --check")
     parser.add_argument("--template", default=None, help="override the template path")
     args = parser.parse_args(argv)
 
+    if args.doctor:
+        return doctor()
+    if args.read:
+        return read_assignment(Path(args.read).expanduser(), args.max_chars)
     if args.check:
         return check(args.check, dump=args.dump)
-    if not args.data or not args.out:
-        parser.error("data.json and out.docx are required")
+    if not args.data:
+        parser.error("data.json is required (or use --read/--check)")
     with open(args.data, encoding="utf-8") as fh:
         data = json.load(fh)
+    if args.out:
+        out = Path(args.out).expanduser()
+    elif args.next_to:
+        assignment = Path(args.next_to).expanduser()
+        out = assignment.resolve().parent / report_name(
+            data.get("work_type"), data.get("number")
+        )
+    else:
+        parser.error("out.docx or --next-to is required")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        sys.exit("cannot create output folder (%s); build inside the workspace instead" % exc)
     if args.template:
         template = Path(args.template)
         template_name = "nocode" if "nocode" in str(template) else "code"
@@ -584,7 +747,8 @@ def main(argv=None):
         template = TEMPLATES[template_name]
     if not template.is_file():
         sys.exit("template not found: " + str(template))
-    return build(template, template_name, data, Path(args.data).resolve().parent, Path(args.out))
+    return build(template, template_name, data, Path(args.data).resolve().parent, out)
+
 
 
 if __name__ == "__main__":

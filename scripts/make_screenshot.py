@@ -5,11 +5,13 @@ Usage:
     python3 scripts/make_screenshot.py out.png --text "program output"
     python3 scripts/make_screenshot.py out.png --text-file output.txt
 
-The public helper is render(text, out_path). Exits with code 3 and a message
-when Pillow is unavailable or no monospace font with Cyrillic is installed.
+The public helper is render(text, out_path, size=SIZE, pad=PAD, wrap=WRAP).
+Long lines are wrapped so the picture stays readable after page scaling.
+Exits with code 3 and a message when Pillow or a monospace font is unavailable.
 """
 
 import argparse
+import re
 import sys
 
 try:
@@ -27,6 +29,8 @@ FONT_CANDIDATES = [
 ]
 SIZE = 22
 PAD = 24
+WRAP = 110
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def _load_font(size=SIZE):
@@ -38,14 +42,33 @@ def _load_font(size=SIZE):
     return None
 
 
-def render(text, out_path, size=SIZE, pad=PAD):
+def _wrap_line(line, width):
+    if width <= 0 or len(line) <= width:
+        return [line]
+    out = []
+    rest = line
+    while len(rest) > width:
+        cut = rest.rfind(" ", 0, width + 1)
+        if cut <= 0:
+            cut = width
+        out.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    out.append(rest)
+    return out
+
+
+def render(text, out_path, size=SIZE, pad=PAD, wrap=WRAP):
     if Image is None:
         raise RuntimeError("Pillow is not available")
     font = _load_font(size)
     if font is None:
         raise RuntimeError("no monospace font with Cyrillic found")
 
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n").split("\n")
+    text = ANSI.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+    lines = []
+    for line in text.replace("\t", "    ").rstrip("\n").split("\n"):
+        lines.extend(_wrap_line(line, wrap))
+
     try:
         width = max(int(font.getlength(line)) for line in lines) + 2 * pad
     except AttributeError:
@@ -68,6 +91,8 @@ def main(argv=None):
     parser.add_argument("out")
     parser.add_argument("--text", default="")
     parser.add_argument("--text-file")
+    parser.add_argument("--size", type=int, default=SIZE)
+    parser.add_argument("--wrap", type=int, default=WRAP)
     args = parser.parse_args(argv)
 
     if Image is None:
@@ -79,7 +104,7 @@ def main(argv=None):
         with open(args.text_file, encoding="utf-8") as fh:
             text = fh.read()
     try:
-        render(text, args.out)
+        render(text, args.out, size=args.size, wrap=args.wrap)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 3
