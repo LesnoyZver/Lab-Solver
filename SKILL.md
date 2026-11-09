@@ -1,102 +1,34 @@
 ---
 name: lab-solver
-description: Use when the user sends a file with a lab or practical assignment (coding or theory subjects). Analyzes the task, picks the variant, solves it, fills the report using the subject's template, checks it once and delivers the finished file.
+description: Solves a lab or practical assignment and fills the report from the template. Use when the user sends a lab or practical task file.
 ---
 
 # Lab Solver
 
-## User settings
-- List number: 5 (change only here)
-- Report language: Russian
-- Subject templates: `subjects/kpiyap/template.docx` for kpiyap (Конструирование программ и языки программирования) and `subjects/psychology/template.docx` for psychology
-- Template for any other subject: `subjects/_default/template.docx`
+`SKILL_DIR` = this folder; personal data in `SKILL_DIR/settings.json`.
 
-## Speed rules
-- Do each step once. Do not re-read files without need.
-- Run the final check (step 5) exactly once against the checklist, no repeat rounds.
-- Do not ask questions if the answer can be taken from the assignment or template.
-
-## Report rules (highest priority, override everything else in this file)
-1. Task text: copy every task from the assignment exactly, word for word, with the same numbering and order. Do not rephrase, shorten, or add examples, hints, explanations or sample data of your own.
-2. No bold text in the report body (task labels, "Код программы:", questions, answers). When copying a paragraph from the template into the body, drop its bold formatting. The title page keeps the template's formatting exactly. Never use bold for emphasis.
-3. No comments in code, neither in the report nor in the code you run (//, /* */, #, XML doc comments, docstrings).
-4. Code in the report: black text on a white background. No shading, highlight, boxes, dark theme or colored background. Remove any w:shd and highlight from code paragraphs and runs.
-5. Work only in Word (.docx): build the file with python-docx or XML editing and check it by extracting its text. Never convert it to PDF or images to check it, never render it. (PNG screenshots of program output are still created to insert into the report.)
-6. No conclusions: no "Вывод", "Выводы", "Заключение" or closing summary in any report. If a template has one, delete it from the report.
-7. No algorithm: no algorithm description, step lists, flowcharts or explanation of how the program works.
-8. Strict template match: the report contains only the elements the template has, in the same order, with the same labels, fonts, sizes, spacing and indents ("Цель работы:", "Задание N.", "Код программы:", "Скрин выполнения программы", "КОНТРОЛЬНЫЕ ВОПРОСЫ:" etc.). Add nothing and remove nothing except what rules 1-7 require. Control questions only if the assignment has them.
+## Rules
+1. Copy tasks word for word, same numbering and order; add nothing of your own. Produce only what the assignment asks for: no code, SQL or anything else it does not request (for a diagram-only work, no SQL schemas and no code in the report).
+2. Plain text only: no markdown, no bold, no conclusion, no algorithm description, no comments in code (including code you run).
+3. .docx only, checked by the build; never PDF or rendering (PNG screenshots allowed).
+4. Strict template match: nothing added, nothing removed; control questions only if the assignment has them.
 
 ## Workflow
+0. Read `SKILL_DIR/settings.json`; if missing, copy `settings.example.json`. If `list_number` or `student` is empty, ask once for list number, title-page full name and group (optional), write them to settings.json (UTF-8, ensure_ascii=False), and never ask again. Write the report in `report_language`.
+1. Read the assignment once: subject, work number, title, teacher, goal, tasks, number of variants K, control questions. Deliverables: programs, scripts or SQL -> `template` `code` (subjects/_default); only diagrams, schemes, models, calculations or text answers -> `nocode` (subjects/_nocode); mixed -> `code`. Set it in data.json.
+2. Ask in ONE message everything missing: list number, student and group on first run; the teacher; the diagram notation or tool. Never build with an empty teacher or invent one.
+3. Variant: follow the assignment's own rule; else variant = ((list_number - 1) mod K) + 1. State it and how it was computed. No variants: all tasks, `variant` empty.
+4. Solve: write each solution to a code file, run it once with `> out.txt 2>&1`, set `lang`, reference `code_file` and `images:["out.txt"]`. Teacher: read it from the assignment (title block, header, signature, file name, text); if absent, ask the user. Diagrams: use the notation, elements, naming and tool the assignment (or materials) specifies; if none, use `diagram_notation` from settings.json when set, else ask once. Draw each as a PNG (Graphviz `dot` if installed, else matplotlib, installed with pip if needed; if neither works, stop and report), readable text in the report language, width fitting the page, no tool code or diagram source in the report. Put PNG paths into the task's `images`. Use `python3` with absolute `SKILL_DIR/scripts/...` paths. If an import fails, run `python3 -m pip install -r SKILL_DIR/requirements.txt` once, else stop.
+5. Build: `python3 SKILL_DIR/scripts/build_report.py data.json OUT.docx`; it checks itself. On VIOLATIONS fix the input and rebuild once; do not run `--check` separately. Name it next to the assignment `ЛР<number>.docx` (lab), `ПР<number>.docx` (practical), else `report_<number>.docx`. Delete temp files (data.json, code files, out.txt, PNGs, diagram sources).
+6. Reply: subject and work, template (code/nocode), variant and computation, path, open [FILL IN] items. No retelling.
 
-### 1. Analyze the assignment
-Read the file and note:
-- subject, work number and title, teacher
-- goal of the work and the list of tasks
-- whether there are variants and how many (K)
-- formatting requirements, if any
-- work type: CODING/TECHNICAL (programming, databases, diagrams) or THEORY/HUMANITIES (psychology, etc.)
-
-If the assignment itself lacks essential data (unclear what to do, no task list), stop and ask the user briefly. Do not invent.
-A missing subject folder in `subjects/` is not a reason to stop, see step 4.
-
-### 2. Pick the variant
-If the work has variants, compute:
-
-    variant = ((N - 1) mod K) + 1
-
-where N = list number, K = number of variants.
-Examples with N = 5: K=3 → variant 2; K=5 → variant 5; K=10 → variant 5; K=4 → variant 1.
-State which variant was chosen and how it was computed. If there are no variants, do all tasks.
-
-### 3. Solve
-For CODING/TECHNICAL work:
-- Complete all tasks of the chosen variant in order.
-- Code must run. Run it once and keep the real output for the report.
-- Save schemes and diagrams as separate image files.
-- Never invent results you did not actually get.
-
-For THEORY/HUMANITIES work (psychology, etc.):
-- Answer every task of the chosen variant in order, in academic but plain language, with the depth and length required by the template.
-- Base answers on the assignment materials and well-established knowledge. Do not invent sources, quotes, statistics or experiment data.
-- If a task needs the student's personal input (own test answers, survey responses, personal observations), insert clearly marked placeholders like [FILL IN: ...] and list them in the final reply.
-- Use only references you are sure exist; otherwise omit the references section content and say so.
-
-### 4. Fill the report
-- kpiyap (Конструирование программ и языки программирования): use `subjects/kpiyap/template.docx`.
-- psychology: use `subjects/psychology/template.docx`.
-- any other subject: use `subjects/_default/template.docx`.
-- Take structure, headings, style and length from the template.
-- In the final reply always state which template was used: the subject's or the general one.
-- Fill the title page (subject, work number, title, teacher, variant).
-- Sections follow the template.
-- Do not change the template's formatting.
-
-### 5. Final check (one pass)
-- [ ] variant chosen correctly, tasks belong to this variant
-- [ ] all tasks covered, nothing skipped
-- [ ] task text matches the assignment word for word
-- [ ] coding work: code runs and report output matches the real output
-- [ ] theory work: no invented facts, sources or data; placeholders are listed
-- [ ] no bold in the body
-- [ ] no comments in code
-- [ ] no conclusion
-- [ ] no algorithm
-- [ ] work title, teacher, list number on the title page
-- [ ] no template leftovers (`<...>`, "FULL NAME", someone else's data)
-- [ ] figure and listing numbering, formatting matches the template
-
-Fix what you find once, then deliver the file. Do not start a second check.
-
-### 6. Reply to the user
-Briefly: subject and work, chosen variant, which template was used (subject's or general), path to the finished report, open placeholders or doubts (if any). No retelling of the whole solution.
-
-## Folder structure
-lab-solver/
-├── SKILL.md
-└── subjects/
-    ├── _default/
-    │   └── template.docx
-    ├── kpiyap/
-    │   └── template.docx
-    └── psychology/
-        └── template.docx
+## data.json
+{
+ "work_type":"ЛАБОРАТОРНОЙ","number":"4","subject":"...","variant":"5","teacher":"...","goal":"...","template":"code",
+ "tasks":[{"n":1,"text":"...","lang":"cpp","code":"..." OR "code_file":"sol.cpp","images":["out.txt","scheme.png"]}],
+ "questions":[{"q":"...","a":"..."}]
+}
+`template` optional (auto by code). `images` alias `screenshots`. Nocode: omit `code`/`code_file`.
+Student/group from settings.json (data.json override only if asked). If Pillow cannot render, leave `images` empty and say so.
+NEVER open, unzip or dump the template XML/footer; the script handles it.
+One pass: each step once; do not re-read files without need.
